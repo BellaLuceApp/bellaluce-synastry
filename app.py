@@ -24,6 +24,7 @@ links, composite), plus each person's tarot birth cards, plus a ready-made
 from flask import Flask, request, jsonify
 from engine import build_chart, pair_payload
 from birth_cards import birth_cards, pair_links
+from contact_hooks import contact_hook
 import datetime as dt
 
 app = Flask(__name__)
@@ -75,12 +76,16 @@ def synastry():
     # on birth time" result), plus each person's Sun sign and birth card.
     certain = [c for c in payload["contacts"] if c["status"] == "certain"]
     tightest = certain[0] if certain else None
+    tightest_hook = None
+    if tightest:
+        tightest_hook = contact_hook(tightest["a_point"], tightest["b_point"], tightest["aspect"])
     payload["teaser"] = {
         "person_a_sun_sign": payload["person_a"]["points"]["Sun"]["sign"],
         "person_b_sun_sign": payload["person_b"]["points"]["Sun"]["sign"],
         "person_a_birth_card": cards_a["personality"]["name"],
         "person_b_birth_card": cards_b["personality"]["name"],
         "tightest_contact": tightest,
+        "tightest_contact_hook": tightest_hook,
         "shared_birth_card": bool(payload["shared_birth_cards"]),
     }
     return jsonify(payload)

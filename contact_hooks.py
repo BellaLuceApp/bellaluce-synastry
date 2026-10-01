@@ -9,13 +9,25 @@ without ever calling an AI (so it's instant, free, and always on-brand,
 the same way BellaLuce's tarot card meanings are hand-curated rather than
 AI-generated).
 
-Design: a pairing's MEANING (what these two points represent together,
-independent of aspect) is curated for the ~25 highest-signal pairs.
-An aspect's TONE (how intensely/favorably that meaning plays out) is
-curated for all 5 aspects. The two combine into one sentence. Any pair
-not explicitly curated still gets a full sentence, built from each
-point's individual flavor text -- so nothing ever falls through blank
-or generic-sounding.
+Design: a pairing's MEANING (what these two points represent together) can
+be curated two ways:
+
+  1. ASPECT-SPECIFIC (preferred, for the highest-exposure pairs): a dict of
+     {aspect_name: full curated sentence}. Each aspect gets its own
+     fully-written sentence, so two users who both hit this pairing but with
+     a different aspect get genuinely different text, not a shared opening
+     line with a different last clause tacked on. This matters because a
+     repeated opening sentence reads as templated/generic to a paying user,
+     even when the underlying result is accurate.
+
+  2. GENERIC (fallback, for pairs not yet given the aspect-specific
+     treatment): a single string describing the pairing regardless of
+     aspect, combined with a generic ASPECT_TONE closing clause. Lower
+     curation cost, but more prone to feeling repetitive across users.
+
+Any pair with neither gets a full sentence built from each point's
+individual flavor text -- so nothing ever falls through blank or
+generic-sounding.
 """
 
 # What each point represents in a relational/synastry context.
@@ -31,7 +43,8 @@ POINT_FLAVOR = {
     "Selena":      "primal magnetism and instinctive pull",
 }
 
-# How each aspect colors the meaning: a connecting verb + an intensity label.
+# Fallback tone for any pairing that only has a GENERIC meaning (see above):
+# a connecting verb + an intensity label, appended as a closing clause.
 ASPECT_TONE = {
     "conjunction": {"verb": "fuses directly with", "label": "an intense, all-in blend"},
     "trine":       {"verb": "flows easily into",   "label": "an effortless, naturally supportive link"},
@@ -41,13 +54,34 @@ ASPECT_TONE = {
 }
 
 # Curated, hand-written meaning for the highest-signal point pairs.
-# Keyed by a frozenset of the two point names (direction doesn't matter for
-# the underlying MEANING -- the aspect tone above is what carries the charge).
+# Keyed by a frozenset of the two point names (direction doesn't matter).
+# Value is EITHER:
+#   - a dict of {aspect_name: full sentence}      (aspect-specific, preferred)
+#   - a plain string                               (generic, see ASPECT_TONE)
 PAIR_MEANING = {
-    frozenset({"Selena", "North Node"}):
-        "This is one of the strongest destiny-style signatures in synastry -- "
-        "one person's raw magnetism lining up with the other's growth path, "
-        "the kind of pull people often describe as instant recognition.",
+    frozenset({"Selena", "North Node"}): {
+        "conjunction":
+            "This is one of the strongest destiny-style signatures in "
+            "synastry -- your magnetism and their growth path aren't just "
+            "nearby, they're fused together, the kind of pull people "
+            "describe as instant recognition.",
+        "square":
+            "Your magnetism and their growth path are rubbing directly "
+            "against each other here -- a live-wire tension that won't let "
+            "either of you look away, even when it's uncomfortable.",
+        "trine":
+            "Your magnetism and their growth path move in sync here, "
+            "almost without effort -- the kind of pull that feels less "
+            "like chemistry and more like fate quietly doing its job.",
+        "sextile":
+            "There's an open doorway between your magnetism and their "
+            "growth path -- not forced, but there, waiting for either of "
+            "you to walk through it.",
+        "opposition":
+            "Your magnetism and their growth path sit on opposite ends of "
+            "the same axis -- a push-pull dynamic where each of you seems "
+            "to complete something the other is missing.",
+    },
     frozenset({"Sun", "Moon"}):
         "This links one person's core identity with the other's emotional "
         "instincts -- classic \"you get me\" territory, often felt as an "
@@ -127,12 +161,24 @@ def contact_hook(a_point, b_point, aspect):
     """One curated marketing-ready sentence explaining why the tightest
     contact between two people is worth paying attention to. Never returns
     blank or bare jargon -- always a full, on-brand sentence."""
-    tone = ASPECT_TONE.get(aspect, ASPECT_TONE["conjunction"])
     pair_key = frozenset({a_point, b_point})
     meaning = PAIR_MEANING.get(pair_key)
-    if meaning is None:
-        a_flavor = POINT_FLAVOR.get(a_point, "an important part of who you are")
-        b_flavor = POINT_FLAVOR.get(b_point, "an important part of who they are")
-        meaning = (f"This links {a_flavor} with {b_flavor} -- "
-                   f"a real point of connection worth understanding.")
+
+    # Case 1: aspect-specific curated sentences (preferred).
+    if isinstance(meaning, dict):
+        sentence = meaning.get(aspect)
+        if sentence:
+            return sentence
+        # an aspect without its own variant falls through to the generic path
+
+    # Case 2: a single generic sentence, plus a tone clause keyed by aspect.
+    tone = ASPECT_TONE.get(aspect, ASPECT_TONE["conjunction"])
+    if isinstance(meaning, str):
+        return f"{meaning} With this exact aspect, it plays out as {tone['label']}."
+
+    # Case 3: nothing curated at all -- build from each point's flavor text.
+    a_flavor = POINT_FLAVOR.get(a_point, "an important part of who you are")
+    b_flavor = POINT_FLAVOR.get(b_point, "an important part of who they are")
+    meaning = (f"This links {a_flavor} with {b_flavor} -- "
+               f"a real point of connection worth understanding.")
     return f"{meaning} With this exact aspect, it plays out as {tone['label']}."

@@ -40,12 +40,13 @@ OPTIONAL = {"Chiron": swe.CHIRON}
 PLANETS_10 = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn",
               "Uranus", "Neptune", "Pluto"]
 SYNASTRY_POINTS = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter",
-                   "Saturn", "North Node", "Selena"]
+                   "Saturn", "North Node", "Selena", "Lilith"]
 ASPECTS = [(0, "conjunction"), (60, "sextile"), (90, "square"),
            (120, "trine"), (180, "opposition")]
 
 ORB_DEFAULT = 6.0   # degrees
 ORB_NODE = 3.0      # any contact involving North Node or Selena
+ORB_AXIS_ECHO = 5.0 # the Lilith/Selena mutual axis-mirror pattern (see below)
 SAMPLES = 97        # every 15 minutes across a 24-hour window
 FLAGS = swe.FLG_SWIEPH | swe.FLG_SPEED
 
@@ -144,7 +145,7 @@ def _orb_range(dlo, dhi, angle, n=121):
 
 
 def _limit(a, b):
-    return ORB_NODE if ({a, b} & {"North Node", "Selena", "South Node"}) else ORB_DEFAULT
+    return ORB_NODE if ({a, b} & {"North Node", "Selena", "South Node", "Lilith"}) else ORB_DEFAULT
 
 
 def contacts(A, B, names=SYNASTRY_POINTS):
@@ -181,6 +182,43 @@ def selena_node_links(A, B):
     return {"A_selena_to_B_node": ab[0] if ab else None,
             "B_selena_to_A_node": ba[0] if ba else None,
             "mutual": bool(ab and ba)}
+
+
+def lilith_selena_axis_echo(A, B):
+    """Whether A and B's Lilith/Selena axes nearly mirror each other:
+    A's Lilith landing close to B's Selena. Since Selena = Lilith + 180 for
+    both people, this is mathematically the SAME fact as A's Selena landing
+    close to B's Lilith -- not two independent confirmations, just the same
+    axis-overlap seen from both ends. So this returns ONE finding, not two,
+    to avoid it reading as double evidence.
+
+    Uses a wider orb (ORB_AXIS_ECHO) than ordinary point contacts (ORB_NODE),
+    since this is a broader "do these two axes roughly line up" pattern
+    rather than a precise point-to-point aspect -- and because it's fairly
+    rare at a tight orb (two independent slow points landing within a few
+    degrees of each other), making it worth catching a bit more generously.
+
+    Returns None if the axes aren't close enough to count.
+    """
+    a_lil, b_sel = A["points"]["Lilith"], B["points"]["Selena"]
+    a_sel, b_lil = A["points"]["Selena"], B["points"]["Lilith"]
+
+    dlo, dhi = a_lil["lo"] - b_sel["hi"], a_lil["hi"] - b_sel["lo"]
+    sep_noon = abs((a_lil["lon"] - b_sel["lon"] + 180) % 360 - 180)
+    mn, mx = _orb_range(dlo, dhi, 0)  # 0 deg = conjunction/overlap target
+    if mn > ORB_AXIS_ECHO:
+        return None
+
+    return {
+        "orb_at_noon": round(sep_noon, 2),
+        "orb_best": round(mn, 2),
+        "orb_worst": round(mx, 2),
+        "status": "certain" if mx <= ORB_AXIS_ECHO else "possible",
+        "a_lilith": {"sign": a_lil["sign"], "text": fmt(a_lil["lon"])},
+        "b_selena": {"sign": b_sel["sign"], "text": fmt(b_sel["lon"])},
+        "a_selena": {"sign": a_sel["sign"], "text": fmt(a_sel["lon"])},
+        "b_lilith": {"sign": b_lil["sign"], "text": fmt(b_lil["lon"])},
+    }
 
 
 # ------------------------------------------------------------- composite
@@ -343,6 +381,7 @@ def person_summary(chart, today=None):
 def pair_payload(A, B, today=None):
     return {"person_a": person_summary(A, today), "person_b": person_summary(B, today),
             "contacts": contacts(A, B)[:12], "selena_north_node": selena_node_links(A, B),
+            "lilith_selena_axis_echo": lilith_selena_axis_echo(A, B),
             "composite": composite(A, B),
             "not_available": ["Rising sign", "houses", "Midheaven/IC", "Part of Fortune",
                               "sect", "Moon degree", "progressed Moon"]}

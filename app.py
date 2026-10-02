@@ -22,7 +22,7 @@ links, composite), plus each person's tarot birth cards, plus a ready-made
 "teaser" object for the free landing-page snapshot.
 """
 from flask import Flask, request, jsonify
-from engine import build_chart, pair_payload
+from engine import build_chart, pair_payload, transits
 from birth_cards import birth_cards, pair_links
 from contact_hooks import contact_hook
 import datetime as dt
@@ -108,6 +108,52 @@ def build_prompt_data(payload, a_name, b_name, today):
     return data
 
 
+def _transit_line(t):
+    """One plain-English line for a single transit, e.g.
+    'Transiting Jupiter trine your natal Venus -- certain (orb 1.2°)'."""
+    return (f"Transiting {t['transit']} {t['aspect']} your natal {t['natal']} -- "
+            f"{t['status']} (orb {t['orb_best']}°)")
+
+
+def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart=None, b_rows=None):
+    """Flat, pre-formatted fields for the DailyAlignment {{placeholder}} prompt
+    template. If no second person was given, the person_b_* fields are filled
+    with harmless placeholder text ('(not included today)') and empty transit
+    lines -- the system message is written to recognize that and talk about
+    Person A only, the same way certain/possible is handled by instruction
+    rather than by hiding fields."""
+    a_certain = [t for t in a_rows if t["status"] == "certain"]
+    a_possible = [t for t in a_rows if t["status"] == "possible"]
+    data = {
+        "today_date": today.isoformat(),
+        "person_a_name": a_name,
+        "person_a_sun_sign": a_chart["points"]["Sun"]["sign"],
+        "person_a_certain_count": len(a_certain),
+        "person_a_possible_count": len(a_possible),
+    }
+    for i in range(8):
+        data[f"person_a_transit_{i + 1}"] = _transit_line(a_rows[i]) if i < len(a_rows) else ""
+
+    if b_chart is not None:
+        b_rows = b_rows or []
+        b_certain = [t for t in b_rows if t["status"] == "certain"]
+        b_possible = [t for t in b_rows if t["status"] == "possible"]
+        data["person_b_name"] = b_name
+        data["person_b_sun_sign"] = b_chart["points"]["Sun"]["sign"]
+        data["person_b_certain_count"] = len(b_certain)
+        data["person_b_possible_count"] = len(b_possible)
+        for i in range(8):
+            data[f"person_b_transit_{i + 1}"] = _transit_line(b_rows[i]) if i < len(b_rows) else ""
+    else:
+        data["person_b_name"] = "(not included today)"
+        data["person_b_sun_sign"] = ""
+        data["person_b_certain_count"] = 0
+        data["person_b_possible_count"] = 0
+        for i in range(8):
+            data[f"person_b_transit_{i + 1}"] = ""
+    return data
+
+
 def _parse_person(p, label):
     if not isinstance(p, dict):
         raise ValueError(f"{label} must be an object")
@@ -162,6 +208,54 @@ def synastry():
         "tightest_contact_hook": tightest_hook,
         "shared_birth_card": bool(payload["shared_birth_cards"]),
     }
+    return jsonify(payload)
+
+
+@app.route("/daily-alignment", methods=["POST"])
+def daily_alignment():
+    body = request.get_json(silent=True) or {}
+    try:
+        a = _parse_person(body.get("person_a"), "person_a")
+    except ValueError as e:
+        return _bad(str(e))
+
+    b = body.get("person_b")
+    if b is not None:
+        try:
+            b = _parse_person(b, "person_b")
+        except ValueError as e:
+            return _bad(str(e))
+
+    try:
+        chart_a = build_chart(a.get("name", "Person A"), a["year"], a["month"], a["day"],
+                              a["timezone"], a.get("place", ""))
+        chart_b = None
+        if b is not None:
+            chart_b = build_chart(b.get("name", "Person B"), b["year"], b["month"], b["day"],
+                                  b["timezone"], b.get("place", ""))
+    except Exception as e:
+        return _bad(f"Could not calculate a chart -- check the timezone name and date. ({e})")
+
+    today = dt.date.today()
+    rows_a = transits(chart_a, today)
+    rows_b = transits(chart_b, today) if chart_b is not None else None
+
+    payload = {
+        "today": today.isoformat(),
+        "person_a": {"name": a.get("name", "Person A"),
+                     "sun_sign": chart_a["points"]["Sun"]["sign"],
+                     "transits": rows_a},
+    }
+    if chart_b is not None:
+        payload["person_b"] = {"name": b.get("name", "Person B"),
+                                "sun_sign": chart_b["points"]["Sun"]["sign"],
+                                "transits": rows_b}
+    else:
+        payload["person_b"] = None
+
+    payload["prompt_data"] = build_daily_prompt_data(
+        today, a.get("name", "Person A"), chart_a, rows_a,
+        b.get("name", "Person B") if b else None, chart_b, rows_b)
     return jsonify(payload)
 
 

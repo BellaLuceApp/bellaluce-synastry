@@ -25,6 +25,7 @@ from flask import Flask, request, jsonify
 from engine import build_chart, pair_payload, transits
 from birth_cards import birth_cards, pair_links
 from contact_hooks import contact_hook
+from transit_hooks import daily_transit_hook
 import datetime as dt
 
 app = Flask(__name__)
@@ -252,6 +253,23 @@ def daily_alignment():
                                 "transits": rows_b}
     else:
         payload["person_b"] = None
+
+    # Free teaser: the single tightest transit for each person given, with a
+    # curated one-line hook -- no AI call, same pattern as /synastry's teaser.
+    def _teaser_for(name, chart, rows):
+        if not rows:
+            return {"name": name, "sun_sign": chart["points"]["Sun"]["sign"],
+                    "tightest_transit": None, "tightest_transit_hook": None}
+        top = rows[0]
+        hook = daily_transit_hook(top["transit"], top["natal"], top["aspect"])
+        return {"name": name, "sun_sign": chart["points"]["Sun"]["sign"],
+                "tightest_transit": top, "tightest_transit_hook": hook}
+
+    payload["teaser"] = {
+        "person_a": _teaser_for(a.get("name", "Person A"), chart_a, rows_a),
+        "person_b": (_teaser_for(b.get("name", "Person B"), chart_b, rows_b)
+                     if chart_b is not None else None),
+    }
 
     payload["prompt_data"] = build_daily_prompt_data(
         today, a.get("name", "Person A"), chart_a, rows_a,

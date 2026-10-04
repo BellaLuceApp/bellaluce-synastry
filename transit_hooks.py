@@ -12,7 +12,7 @@ combinations gets a fully written sentence; everything else falls back to
 a formula built from each side's flavor text, so nothing ever reads as
 bare jargon.
 """
-from contact_hooks import POINT_FLAVOR, ASPECT_TONE
+from contact_hooks import POINT_FLAVOR, ASPECT_TONE, contact_hook
 
 # What each transiting (slow-moving) planet represents as a current
 # influence, independent of which natal point it's touching.
@@ -63,3 +63,50 @@ def daily_transit_hook(transit_planet, natal_point, aspect):
     return (f"Transiting {transit_planet} is bringing {t_flavor}, meeting "
             f"{n_flavor} in your own chart. With this exact aspect, it "
             f"plays out as {tone['label']}.")
+
+
+def find_activated_contact(top_a, top_b, contacts):
+    """Look for a synastry contact (between two people) that today's
+    tightest transit for EITHER person is landing on. This is what makes a
+    paired Daily Alignment teaser actually relational instead of two
+    side-by-side solo horoscopes: if a transiting planet is hitting a point
+    that's already part of something connecting these two charts, that's
+    the single most relevant thing to surface today.
+
+    Prefers a CERTAIN contact over a possible one, and person A's transit
+    over person B's (arbitrary but stable tie-break). Returns
+    (transit_row, which, contact) or None if nothing lines up.
+    """
+    candidates = []
+    if top_a:
+        candidates.append((top_a, "A"))
+    if top_b:
+        candidates.append((top_b, "B"))
+
+    for status_wanted in ("certain", "possible"):
+        for row, who in candidates:
+            natal_point = row["natal"]
+            for c in contacts:
+                if c["status"] != status_wanted:
+                    continue
+                if natal_point in (c["a_point"], c["b_point"]):
+                    return row, who, c
+    return None
+
+
+def activated_contact_hook(a_name, b_name, transit_row, who, contact):
+    """One curated sentence tying today's transit to an existing connection
+    between two people -- the relational payoff that makes paired Daily
+    Alignment worth more than two separate solo snapshots."""
+    transit_planet = transit_row["transit"]
+    natal_point = transit_row["natal"]
+    owner_name = a_name if who == "A" else b_name
+    other_name = b_name if who == "A" else a_name
+
+    t_flavor = TRANSIT_FLAVOR.get(transit_planet, "a notable current influence")
+    link_meaning = contact_hook(contact["a_point"], contact["b_point"], contact["aspect"])
+
+    return (f"Transiting {transit_planet} is bringing {t_flavor} right to "
+            f"{owner_name}'s {natal_point} today -- and that's exactly the "
+            f"point already connecting {owner_name} and {other_name}'s "
+            f"charts. {link_meaning}")

@@ -25,7 +25,7 @@ from flask import Flask, request, jsonify
 from engine import build_chart, pair_payload, transits
 from birth_cards import birth_cards, pair_links
 from contact_hooks import contact_hook
-from transit_hooks import daily_transit_hook
+from transit_hooks import daily_transit_hook, find_activated_contact, activated_contact_hook
 import datetime as dt
 
 app = Flask(__name__)
@@ -116,13 +116,20 @@ def _transit_line(t):
             f"{t['status']} (orb {t['orb_best']}°)")
 
 
-def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart=None, b_rows=None):
+def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart=None, b_rows=None,
+                             shared_contacts=None):
     """Flat, pre-formatted fields for the DailyAlignment {{placeholder}} prompt
     template. If no second person was given, the person_b_* fields are filled
     with harmless placeholder text ('(not included today)') and empty transit
     lines -- the system message is written to recognize that and talk about
     Person A only, the same way certain/possible is handled by instruction
-    rather than by hiding fields."""
+    rather than by hiding fields.
+
+    shared_contacts, when given (paired mode only), is the synastry contact
+    list between the two people -- this is what lets the AI write a genuinely
+    relational full reading instead of two solo horoscopes stapled together:
+    it can see not just what's transiting today, but what's already
+    connecting these two charts, and tie the two together itself."""
     a_certain = [t for t in a_rows if t["status"] == "certain"]
     a_possible = [t for t in a_rows if t["status"] == "possible"]
     data = {
@@ -152,6 +159,11 @@ def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart
         data["person_b_possible_count"] = 0
         for i in range(8):
             data[f"person_b_transit_{i + 1}"] = ""
+
+    shared_contacts = shared_contacts or []
+    for i in range(6):
+        data[f"shared_contact_{i + 1}"] = (
+            _contact_line(shared_contacts[i]) if i < len(shared_contacts) else "")
     return data
 
 
@@ -241,6 +253,15 @@ def daily_alignment():
     rows_a = transits(chart_a, today)
     rows_b = transits(chart_b, today) if chart_b is not None else None
 
+    # Paired mode only: the synastry contacts between the two charts. This is
+    # what lets today's transits be tied back to something that already
+    # connects these two people, instead of just reporting two solo
+    # horoscopes side by side.
+    contacts = []
+    if chart_b is not None:
+        synastry_payload = pair_payload(chart_a, chart_b, today)
+        contacts = synastry_payload["contacts"]
+
     payload = {
         "today": today.isoformat(),
         "person_a": {"name": a.get("name", "Person A"),
@@ -271,9 +292,23 @@ def daily_alignment():
                      if chart_b is not None else None),
     }
 
+    # Paired mode: if today's tightest transit for either person is landing
+    # on a point that's already part of a contact BETWEEN them, surface that
+    # as the headline instead of two disconnected snapshots -- this is the
+    # actual "alignment" the feature is named for.
+    payload["teaser"]["shared_hook"] = None
+    if chart_b is not None and rows_a and rows_b:
+        activated = find_activated_contact(rows_a[0], rows_b[0], contacts)
+        if activated:
+            transit_row, who, contact = activated
+            payload["teaser"]["shared_hook"] = activated_contact_hook(
+                a.get("name", "Person A"), b.get("name", "Person B"),
+                transit_row, who, contact)
+
     payload["prompt_data"] = build_daily_prompt_data(
         today, a.get("name", "Person A"), chart_a, rows_a,
-        b.get("name", "Person B") if b else None, chart_b, rows_b)
+        b.get("name", "Person B") if b else None, chart_b, rows_b,
+        shared_contacts=contacts)
     return jsonify(payload)
 
 

@@ -298,7 +298,7 @@ def daily_alignment():
     # actual "alignment" the feature is named for.
     payload["teaser"]["shared_hook"] = None
     if chart_b is not None and rows_a and rows_b:
-        activated = find_activated_contact(rows_a[0], rows_b[0], contacts)
+        activated = find_activated_contact(rows_a, rows_b, contacts)
         if activated:
             transit_row, who, contact = activated
             payload["teaser"]["shared_hook"] = activated_contact_hook(

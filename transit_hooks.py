@@ -65,33 +65,57 @@ def daily_transit_hook(transit_planet, natal_point, aspect):
             f"plays out as {tone['label']}.")
 
 
-def find_activated_contact(top_a, top_b, contacts):
-    """Look for a synastry contact (between two people) that today's
-    tightest transit for EITHER person is landing on. This is what makes a
-    paired Daily Alignment teaser actually relational instead of two
-    side-by-side solo horoscopes: if a transiting planet is hitting a point
-    that's already part of something connecting these two charts, that's
-    the single most relevant thing to surface today.
+def find_activated_contact(rows_a, rows_b, contacts):
+    """Look for a synastry contact (between two people) that ANY of today's
+    transits for EITHER person is landing on -- not just each person's
+    single tightest transit. This is what makes a paired Daily Alignment
+    teaser actually relational instead of two side-by-side solo horoscopes:
+    if a transiting planet is hitting a point that's already part of
+    something connecting these two charts, that's the most relevant thing
+    to surface today.
 
-    Prefers a CERTAIN contact over a possible one, and person A's transit
-    over person B's (arbitrary but stable tie-break). Returns
+    Checks every transit row for both people (up to 8 each from the engine),
+    not just the top one, since narrowing to only the tightest transit per
+    person made a match too rare to be useful in practice. Prefers, in
+    order: a CERTAIN contact matched by a CERTAIN transit, then a CERTAIN
+    contact matched by a possible transit, then any remaining match --
+    and within each tier, the tightest transit orb wins. Returns
     (transit_row, which, contact) or None if nothing lines up.
     """
     candidates = []
-    if top_a:
-        candidates.append((top_a, "A"))
-    if top_b:
-        candidates.append((top_b, "B"))
+    for row in (rows_a or []):
+        candidates.append((row, "A"))
+    for row in (rows_b or []):
+        candidates.append((row, "B"))
 
-    for status_wanted in ("certain", "possible"):
-        for row, who in candidates:
-            natal_point = row["natal"]
-            for c in contacts:
-                if c["status"] != status_wanted:
-                    continue
-                if natal_point in (c["a_point"], c["b_point"]):
-                    return row, who, c
-    return None
+    def rank(row, contact):
+        # Lower is better: certain contact + certain transit first, then
+        # certain contact + possible transit, then anything else; tightest
+        # orb breaks ties within a tier.
+        contact_certain = contact["status"] == "certain"
+        transit_certain = row["status"] == "certain"
+        if contact_certain and transit_certain:
+            tier = 0
+        elif contact_certain:
+            tier = 1
+        else:
+            tier = 2
+        return (tier, row["orb_best"])
+
+    best = None
+    for row, who in candidates:
+        natal_point = row["natal"]
+        for c in contacts:
+            if natal_point not in (c["a_point"], c["b_point"]):
+                continue
+            candidate_rank = rank(row, c)
+            if best is None or candidate_rank < best[0]:
+                best = (candidate_rank, row, who, c)
+
+    if best is None:
+        return None
+    _, row, who, c = best
+    return row, who, c
 
 
 def activated_contact_hook(a_name, b_name, transit_row, who, contact):

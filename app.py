@@ -207,11 +207,18 @@ def synastry():
     # A ready-made teaser for the free landing-page snapshot: the single
     # tightest CERTAIN contact (so the free hook never shows an "it depends
     # on birth time" result), plus each person's Sun sign and birth card.
+    # relationship_label (e.g. "Romantic", "Family", "Friend") picks whether
+    # the curated hook text leans romantic or platonic -- defaults to
+    # Romantic so existing callers that don't send it are unaffected.
+    relationship_label = (body.get("relationship_label") or "Romantic").strip().lower()
+    romantic = relationship_label == "romantic"
+
     certain = [c for c in payload["contacts"] if c["status"] == "certain"]
     tightest = certain[0] if certain else None
     tightest_hook = None
     if tightest:
-        tightest_hook = contact_hook(tightest["a_point"], tightest["b_point"], tightest["aspect"])
+        tightest_hook = contact_hook(tightest["a_point"], tightest["b_point"], tightest["aspect"],
+                                      romantic=romantic)
     payload["teaser"] = {
         "person_a_sun_sign": payload["person_a"]["points"]["Sun"]["sign"],
         "person_b_sun_sign": payload["person_b"]["points"]["Sun"]["sign"],

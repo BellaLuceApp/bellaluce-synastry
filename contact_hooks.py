@@ -156,13 +156,58 @@ PAIR_MEANING = {
         "out a bigger, more confident version of you.",
 }
 
+# Platonic rewrites for the handful of PAIR_MEANING entries above whose
+# default wording leans romantic ("attraction," "chemistry," "lovable,"
+# "about love," etc.) -- used instead of PAIR_MEANING when the reading is
+# for a Family or Friend bond rather than a Romantic one, so a parent/child
+# or platonic-friend pairing never gets language written for partners.
+# Any pair NOT listed here (Sun/Moon, Mercury/Moon, Saturn/Sun, the
+# Selena/North Node dict, etc.) is already relationship-neutral and is
+# reused as-is.
+PAIR_MEANING_PLATONIC = {
+    frozenset({"Venus", "Mars"}):
+        "One person's sense of what they value and enjoy meets the other's "
+        "drive and determination -- a dynamic push-and-pull between what "
+        "each of you cares about and how each of you goes after it.",
+    frozenset({"Sun", "Venus"}):
+        "One person's core identity meets the other's sense of what they "
+        "value -- a sign that just being yourself is part of what this "
+        "bond appreciates about you.",
+    frozenset({"Moon", "Venus"}):
+        "Emotional comfort meets what one person values here -- often felt "
+        "as warmth and ease in each other's company.",
+    frozenset({"Venus", "Venus"}):
+        "A shared sense of what each of you values and appreciates -- an "
+        "easy overlap in taste and what feels good to both of you.",
+    frozenset({"Venus", "North Node"}):
+        "What one person values lining up with the other's growth path -- "
+        "the kind of connection that can feel like it's meant to teach you "
+        "something about what truly matters to you.",
+    frozenset({"Venus", "Selena"}):
+        "What one person values, amplified by the other's instinctive "
+        "pull -- a closeness that's a little hard to fully put into words.",
+    frozenset({"Mars", "Selena"}):
+        "Drive meeting instinctive magnetism -- an intensity that tends to "
+        "be felt immediately, before much is even said.",
+    frozenset({"Saturn", "Venus"}):
+        "Commitment meeting what one person values -- often a sign of a "
+        "bond that settles into something steady and dependable over time.",
+}
 
-def contact_hook(a_point, b_point, aspect):
+
+def contact_hook(a_point, b_point, aspect, romantic=True):
     """One curated marketing-ready sentence explaining why the tightest
     contact between two people is worth paying attention to. Never returns
-    blank or bare jargon -- always a full, on-brand sentence."""
+    blank or bare jargon -- always a full, on-brand sentence.
+
+    romantic=False swaps in platonic phrasing (see PAIR_MEANING_PLATONIC)
+    for the pairs whose default wording leans romantic -- pass this for
+    Family or Friend readings so a parent/child or platonic bond never
+    gets "chemistry"/"attraction"-style language written for partners."""
     pair_key = frozenset({a_point, b_point})
     meaning = PAIR_MEANING.get(pair_key)
+    if not romantic:
+        meaning = PAIR_MEANING_PLATONIC.get(pair_key, meaning)
 
     # Case 1: aspect-specific curated sentences (preferred).
     if isinstance(meaning, dict):

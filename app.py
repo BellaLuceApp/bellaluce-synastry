@@ -22,7 +22,7 @@ links, composite), plus each person's tarot birth cards, plus a ready-made
 "teaser" object for the free landing-page snapshot.
 """
 from flask import Flask, request, jsonify
-from engine import build_chart, pair_payload, transits
+from engine import build_chart, pair_payload, transits, person_summary
 from birth_cards import birth_cards, pair_links
 from contact_hooks import contact_hook
 from transit_hooks import daily_transit_hook, find_activated_contact, activated_contact_hook
@@ -317,6 +317,48 @@ def daily_alignment():
         b.get("name", "Person B") if b else None, chart_b, rows_b,
         shared_contacts=contacts)
     return jsonify(payload)
+
+
+@app.route("/chart", methods=["POST"])
+def chart_endpoint():
+    """One person's natal chart as a compact block of text, so Bubble can
+    save it once instead of recalculating it for every reading.
+    INPUT: {"person": {"name": "...", "year": 1978, "month": 5, "day": 24,
+                       "timezone": "America/Sao_Paulo"}}"""
+    body = request.get_json(silent=True) or {}
+    try:
+        p = _parse_person(body.get("person"), "person")
+    except ValueError as e:
+        return _bad(str(e))
+
+    try:
+        chart = build_chart(p.get("name", "Person"), p["year"], p["month"], p["day"],
+                            p["timezone"], p.get("place", ""))
+    except Exception as e:
+        return _bad(f"Could not calculate a chart -- check the timezone name and date. ({e})")
+
+    today = dt.date.today()
+    summary = person_summary(chart, today)
+    summary.pop("current_transits", None)  # changes daily, so never saved
+
+    lines = []
+    for name, pt in summary["points"].items():
+        if not pt["sign_certain"]:
+            lines.append(f"{name}: sign uncertain, could be {' or '.join(pt['sign_options'])}")
+        else:
+            retro = " (retrograde)" if pt["retrograde"] and pt["retro_certain"] else ""
+            lines.append(f"{name}: {pt['text']}{retro}")
+
+    cards = birth_cards(p["year"], p["month"], p["day"], today)
+    lines.append(f"Birth card (personality): {cards['personality']['name']}")
+    lines.append(f"Birth card (soul): {cards['soul']['name']}")
+
+    return jsonify({
+        "calculated_on": today.isoformat(),
+        "chart_text": "\n".join(lines),
+        "chart": summary,
+        "birth_cards": cards,
+    })
 
 
 @app.route("/healthz", methods=["GET"])

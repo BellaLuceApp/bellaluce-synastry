@@ -48,6 +48,36 @@ def _contact_line(c, a_name="Person A", b_name="Person B"):
             f"{c['status']} (orb {c['orb_best']}°)")
 
 
+def _chart_text(summary, cards):
+    """A person's natal chart as plain text (same text /chart has always
+    produced), reused by /chart and /cards-and-stars-data."""
+    lines = []
+    for name, pt in summary["points"].items():
+        if not pt["sign_certain"]:
+            lines.append(f"{name}: sign uncertain, could be {' or '.join(pt['sign_options'])}")
+        else:
+            retro = " (retrograde)" if pt["retrograde"] and pt["retro_certain"] else ""
+            lines.append(f"{name}: {pt['text']}{retro}")
+    lines.append(f"Birth card (personality): {cards['personality']['name']}")
+    lines.append(f"Birth card (soul): {cards['soul']['name']}")
+    return "\n".join(lines)
+
+
+OUTER = {"Uranus", "Neptune", "Pluto"}
+
+
+def _transit_text(rows, name):
+    """Today's transits for one person as plain lines. Empty -> a plain note."""
+    if not rows:
+        return f"No tight transits to {name}'s chart today."
+    out = []
+    for r in rows:
+        out.append(f"Transiting {r['transit']} {r['aspect']} {name}'s natal {r['natal']} -- "
+                   f"{r['status']} (orb {r['orb_best']}\u00b0)")
+    return "\n".join(out)
+
+
+
 def build_prompt_data(payload, a_name, b_name, today):
     """Flat, pre-formatted fields meant to be dropped straight into a
     {{placeholder}}-style AI prompt template -- so the Bubble side only
@@ -352,21 +382,12 @@ def chart_endpoint():
     summary = person_summary(chart, today)
     summary.pop("current_transits", None)  # changes daily, so never saved
 
-    lines = []
-    for name, pt in summary["points"].items():
-        if not pt["sign_certain"]:
-            lines.append(f"{name}: sign uncertain, could be {' or '.join(pt['sign_options'])}")
-        else:
-            retro = " (retrograde)" if pt["retrograde"] and pt["retro_certain"] else ""
-            lines.append(f"{name}: {pt['text']}{retro}")
-
     cards = birth_cards(p["year"], p["month"], p["day"], today)
-    lines.append(f"Birth card (personality): {cards['personality']['name']}")
-    lines.append(f"Birth card (soul): {cards['soul']['name']}")
+    chart_text = _chart_text(summary, cards)
 
     return jsonify({
         "calculated_on": today.isoformat(),
-        "chart_text": "\n".join(lines),
+        "chart_text": chart_text,
         "chart": summary,
         "birth_cards": cards,
     })
@@ -375,6 +396,83 @@ def chart_endpoint():
 @app.route("/healthz", methods=["GET"])
 def healthz():
     return jsonify({"ok": True})
+
+
+
+@app.route("/cards-and-stars-data", methods=["POST"])
+def cards_and_stars_data():
+    """Everything the Cards and Stars reading needs from the stars side, as
+    flat text fields ready for {{placeholder}} find/replace.
+    INPUT: {"person_a": {...the querent...}, "person_b": {...optional...}}
+    Same person format as /synastry. Send person_b only when the reading
+    involves another person."""
+    body = request.get_json(silent=True) or {}
+    try:
+        a = _parse_person(body.get("person_a"), "person_a")
+    except ValueError as e:
+        return _bad(str(e))
+    b = body.get("person_b")
+    if b is not None:
+        try:
+            b = _parse_person(b, "person_b")
+        except ValueError as e:
+            return _bad(str(e))
+
+    a_name = a.get("name", "the querent")
+    b_name = b.get("name", "the other person") if b else ""
+    today = dt.date.today()
+
+    try:
+        chart_a = build_chart(a_name, a["year"], a["month"], a["day"],
+                              a["timezone"], a.get("place", ""))
+        chart_b = None
+        if b is not None:
+            chart_b = build_chart(b_name, b["year"], b["month"], b["day"],
+                                  b["timezone"], b.get("place", ""))
+    except Exception as e:
+        return _bad(f"Could not calculate a chart -- check the timezone name and date. ({e})")
+
+    sum_a = person_summary(chart_a, today)
+    rows_a = sum_a.pop("current_transits", [])
+    cards_a = birth_cards(a["year"], a["month"], a["day"], today)
+
+    out = {
+        "today": today.isoformat(),
+        "querent_name": a_name,
+        "querent_chart": _chart_text(sum_a, cards_a),
+        "querent_transits": _transit_text(rows_a, a_name),
+        "has_other_person": "no",
+        "other_person_name": "",
+        "other_person_chart": "",
+        "other_person_transits": "",
+        "contacts_block": "No other person is part of this reading.",
+        "certain_count": 0,
+        "possible_count": 0,
+    }
+
+    if chart_b is not None:
+        sum_b = person_summary(chart_b, today)
+        rows_b = sum_b.pop("current_transits", [])
+        cards_b = birth_cards(b["year"], b["month"], b["day"], today)
+        pair = pair_payload(chart_a, chart_b, today)
+        # Drop contacts where BOTH points are outer planets (generational,
+        # they say nothing personal about this pair); keep the rest.
+        kept = [c for c in pair["contacts"]
+                if not (c["a_point"] in OUTER and c["b_point"] in OUTER)]
+        out.update({
+            "has_other_person": "yes",
+            "other_person_name": b_name,
+            "other_person_chart": _chart_text(sum_b, cards_b),
+            "other_person_transits": _transit_text(rows_b, b_name),
+            "contacts_block": "\n".join(_contact_line(c, a_name, b_name) for c in kept)
+                              or "No notable contacts between these two charts.",
+            "certain_count": sum(1 for c in kept if c["status"] == "certain"),
+            "possible_count": sum(1 for c in kept if c["status"] == "possible"),
+        })
+
+    saved = dict(out)
+    out["payload_text"] = json.dumps(saved, ensure_ascii=False, separators=(",", ":"))
+    return jsonify(out)
 
 
 if __name__ == "__main__":

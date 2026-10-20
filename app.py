@@ -26,6 +26,7 @@ from engine import build_chart, pair_payload, transits, person_summary
 from birth_cards import birth_cards, pair_links
 from contact_hooks import contact_hook
 from transit_hooks import daily_transit_hook, find_activated_contact, activated_contact_hook
+import json
 import datetime as dt
 
 app = Flask(__name__)
@@ -228,6 +229,10 @@ def synastry():
         "tightest_contact_hook": tightest_hook,
         "shared_birth_card": bool(payload["shared_birth_cards"]),
     }
+    # One ready-made text copy of the whole result (minus the prompt text,
+    # which Bubble already saves separately) so Bubble can store it.
+    saved = {k: v for k, v in payload.items() if k != "prompt_data"}
+    payload["payload_text"] = json.dumps(saved, ensure_ascii=False,separators=(",", ":"))
     return jsonify(payload)
 
 

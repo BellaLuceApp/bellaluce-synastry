@@ -38,14 +38,14 @@ def _bad(msg, code=400):
     return jsonify({"error": msg}), code
 
 
-def _contact_line(c):
+def _contact_line(c, a_name="Person A", b_name="Person B"):
     """One plain-English line for a single contact, ready to drop straight
     into an AI prompt -- so Bubble never has to assemble it from five
-    separate fields."""
+    separate fields. Names say whose planet is whose."""
     if not c:
         return ""
-    return (f"{c['a_point']} {c['aspect']} {c['b_point']} -- {c['status']} "
-            f"(orb {c['orb_best']}°)")
+    return (f"{a_name}'s {c['a_point']} {c['aspect']} {b_name}'s {c['b_point']} -- "
+            f"{c['status']} (orb {c['orb_best']}°)")
 
 
 def build_prompt_data(payload, a_name, b_name, today):
@@ -106,7 +106,8 @@ def build_prompt_data(payload, a_name, b_name, today):
         "selena_node_summary": sn_summary,
     }
     for i in range(12):
-        data[f"contact_{i + 1}"] = _contact_line(contacts[i]) if i < len(contacts) else ""
+        data[f"contact_{i + 1}"] = (_contact_line(contacts[i], a_name, b_name)
+                                    if i < len(contacts) else "")
     return data
 
 
@@ -164,7 +165,8 @@ def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart
     shared_contacts = shared_contacts or []
     for i in range(6):
         data[f"shared_contact_{i + 1}"] = (
-            _contact_line(shared_contacts[i]) if i < len(shared_contacts) else "")
+            _contact_line(shared_contacts[i], a_name, b_name or "Person B")
+            if i < len(shared_contacts) else "")
     return data
 
 
@@ -321,6 +323,10 @@ def daily_alignment():
         today, a.get("name", "Person A"), chart_a, rows_a,
         b.get("name", "Person B") if b else None, chart_b, rows_b,
         shared_contacts=contacts)
+    # One ready-made text copy of the whole result (minus the prompt text,
+    # which Bubble already saves separately) so Bubble can store it.
+    saved = {k: v for k, v in payload.items() if k != "prompt_data"}
+    payload["payload_text"] = json.dumps(saved, ensure_ascii=False, separators=(",", ":"))
     return jsonify(payload)
 
 

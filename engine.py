@@ -342,22 +342,47 @@ def returns(chart, today):
 TRANSIT_ASPECTS = ASPECTS
 
 
-def transits(chart, today, orb=3.0, top=8):
-    jd = swe.julday(today.year, today.month, today.day, 12)
+SLOW_TRANSITERS = ("Jupiter", "Saturn", "Uranus", "Neptune", "Pluto")
+FAST_TRANSITERS = ("Sun", "Mercury", "Venus", "Mars")   # need no birth time
+TRANSIT_TARGETS = ("Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn",
+                   "North Node", "Selena")
+FAST_ORB = 1.5      # fast planets move quickly, so their contacts need a tighter orb
+
+
+def _transit_rows(chart, jd, transiters, orb, pace):
     rows = []
-    for tname in ("Jupiter", "Saturn", "Uranus", "Neptune", "Pluto"):
+    for tname in transiters:
         t = _lon_speed(BODIES[tname], jd)[0]
-        for n in ("Sun", "Mercury", "Venus", "Mars", "Jupiter", "Saturn",
-                  "North Node", "Selena"):
+        for n in TRANSIT_TARGETS:
             p = chart["points"][n]
             for ang, an in TRANSIT_ASPECTS:
                 mn, mx = _orb_range(t - p["hi"], t - p["lo"], ang)
                 if mn <= orb:
                     rows.append({"transit": tname, "natal": n, "aspect": an,
                                  "orb_best": round(mn, 2),
-                                 "status": "certain" if mx <= orb else "possible"})
+                                 "status": "certain" if mx <= orb else "possible",
+                                 "pace": pace})
     rows.sort(key=lambda r: (r["status"] != "certain", r["orb_best"]))
-    return rows[:top]
+    return rows
+
+
+def transits(chart, today, orb=3.0, top=8, fast_orb=FAST_ORB, fast_top=3):
+    """Today's transits to one chart. Two groups, kept apart so the slow planets
+    (which barely change from day to day) cannot crowd out the fast ones:
+
+      slow  Jupiter..Pluto, orb 3 deg    -- the "season" you are in
+      fast  Sun, Mercury, Venus, Mars,   -- what is different today
+            orb 1.5 deg
+
+    At most `fast_top` fast rows are kept; the slow rows fill the rest of `top`.
+    Natal Moon, Rising sign and houses are never used (they need a birth time).
+    Each row carries pace = "slow" or "fast". fast_top=0 gives the old output."""
+    jd = swe.julday(today.year, today.month, today.day, 12)
+    fast = _transit_rows(chart, jd, FAST_TRANSITERS, fast_orb, "fast")[:max(fast_top, 0)]
+    slow = _transit_rows(chart, jd, SLOW_TRANSITERS, orb, "slow")[:max(top - len(fast), 0)]
+    rows = slow + fast
+    rows.sort(key=lambda r: (r["status"] != "certain", r["orb_best"]))
+    return rows
 
 
 # ------------------------------------------------------------------ payload

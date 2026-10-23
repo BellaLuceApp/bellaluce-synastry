@@ -66,6 +66,12 @@ def _chart_text(summary, cards):
 OUTER = {"Uranus", "Neptune", "Pluto"}
 
 
+def _pace_tag(r):
+    """Tells the AI whether a transit is today's trigger or the long background."""
+    return ("fast-moving, changes within days" if r.get("pace") == "fast"
+            else "slow-moving, background for weeks or months")
+
+
 def _transit_text(rows, name):
     """Today's transits for one person as plain lines. Empty -> a plain note."""
     if not rows:
@@ -73,7 +79,7 @@ def _transit_text(rows, name):
     out = []
     for r in rows:
         out.append(f"Transiting {r['transit']} {r['aspect']} {name}'s natal {r['natal']} -- "
-                   f"{r['status']} (orb {r['orb_best']}\u00b0)")
+                   f"{r['status']} (orb {r['orb_best']}\u00b0, {_pace_tag(r)})")
     return "\n".join(out)
 
 
@@ -145,7 +151,7 @@ def _transit_line(t):
     """One plain-English line for a single transit, e.g.
     'Transiting Jupiter trine your natal Venus -- certain (orb 1.2°)'."""
     return (f"Transiting {t['transit']} {t['aspect']} your natal {t['natal']} -- "
-            f"{t['status']} (orb {t['orb_best']}°)")
+            f"{t['status']} (orb {t['orb_best']}°, {_pace_tag(t)})")
 
 
 def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart=None, b_rows=None,

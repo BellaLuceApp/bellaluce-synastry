@@ -14,9 +14,14 @@ bare jargon.
 """
 from contact_hooks import POINT_FLAVOR, ASPECT_TONE, contact_hook
 
-# What each transiting (slow-moving) planet represents as a current
-# influence, independent of which natal point it's touching.
+# What each transiting planet represents as a current influence,
+# independent of which natal point it's touching. Jupiter-Pluto are the slow
+# "season" planets; Sun-Mars are the fast ones that change within days.
 TRANSIT_FLAVOR = {
+    "Sun":     "a spotlight on whatever it touches, for a day or two",
+    "Mercury": "a burst of talk, thinking, and news",
+    "Venus":   "a pull toward affection, pleasure, and harmony",
+    "Mars":    "a surge of drive, heat, and friction",
     "Jupiter": "a wave of growth, luck, and expansion",
     "Saturn":  "a test of structure, discipline, and staying power",
     "Uranus":  "a jolt of change, disruption, and sudden clarity",

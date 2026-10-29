@@ -29,6 +29,8 @@ _LEAN_BY_LOWER = {k.lower(): k for k in LEAN_ORDER}
 MAJOR_LOWER = {m.lower() for m in _MAJOR} | {"judgment", "the wheel of fortune"}
 
 MAX_READINGS_FOR_TRANSITS = 200   # most recent; keeps the call fast
+TIMELINE_MAX = 20                 # readings listed in the timeline (most recent)
+QUESTION_MAX_CHARS = 240
 MIN_LINK_READINGS = 3             # a transit must be present in this many readings
 MIN_WITHOUT = 2                   # ...and absent in this many, so there is a contrast
 PERMUTATIONS = 2000               # shuffles used for the chance check
@@ -334,6 +336,24 @@ def _links_text(found, n, span_days=None):
     return "\n".join(lines)
 
 
+def _timeline_text(readings, label_for):
+    """Every reading in scope, oldest to newest, so the AI can see HOW the
+    questions and the answers moved, not just the totals."""
+    shown = readings[-TIMELINE_MAX:]
+    head = "Timeline of readings in this scope, oldest to newest"
+    if len(readings) > len(shown):
+        head += f" (the most recent {len(shown)} of {len(readings)} are listed)"
+    lines = [head + ":"]
+    for r in shown:
+        q = re.sub(r"\s+", " ", r["question"]).strip()
+        if len(q) > QUESTION_MAX_CHARS:
+            q = q[:QUESTION_MAX_CHARS].rstrip() + "..."
+        cards = ", ".join(f"{n} ({'reversed' if rev else 'upright'})" for n, rev in r["cards"])
+        lines.append(f"  - {r['date'].isoformat()} | {label_for(r['situation'])} | "
+                     f"Energy Lean: {r['lean']} | Question: {q or '(not saved)'} | Cards: {cards}")
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------- driver
 def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5):
     readings, skipped = parse_block(readings_text)
@@ -357,17 +377,28 @@ def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5):
             order.append(key)
         groups[key].append(r)
 
-    blocks, stats_groups, counter = [], {}, 0
+    # one readable name per situation: the given name, else "Situation N"
+    sit_names, counter = {}, 0
+    for key in order:
+        if key is None:
+            continue
+        counter += 1
+        sit_names[key] = names.get(key, f"Situation {counter}")
+
+    def label_for(key):
+        return "no situation" if key is None else sit_names[key]
+
+    blocks, stats_groups = [], {}
     overall = _group_stats(readings)
     blocks.append(_group_text("All readings in this scope", readings, overall))
+    blocks.append(_timeline_text(readings, label_for))
     labelled = [k for k in order if k is not None]
     if labelled:      # break down by situation only when any reading has one
         for key in order:
             if key is None:
                 label = "Readings with no situation (one-time readings)"
             else:
-                counter += 1
-                label = f"Situation: {names.get(key, 'Situation ' + str(counter))}"
+                label = f"Situation: {sit_names[key]}"
             grp = groups[key]
             if len(grp) < 2:
                 blocks.append(f"{label}: only {len(grp)} reading so far, too early to say anything")

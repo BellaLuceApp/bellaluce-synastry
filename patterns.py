@@ -113,9 +113,10 @@ def parse_block(readings_text):
 
 
 def parse_names(names_text):
-    """Optional 'id=Name' pairs, separated by new lines or ;;"""
+    """Optional 'id=Name' pairs, separated by new lines or ;; (a stray space
+    between the semicolons, as Bubble can produce, is accepted too)."""
     out = {}
-    for part in re.split(r"\n|;;", names_text or ""):
+    for part in re.split(r"\n|;\s*;", names_text or ""):
         if "=" in part:
             k, v = part.split("=", 1)
             if k.strip() and v.strip():

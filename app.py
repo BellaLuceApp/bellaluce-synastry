@@ -28,6 +28,7 @@ from contact_hooks import contact_hook
 from transit_hooks import daily_transit_hook, find_activated_contact, activated_contact_hook
 import json
 import datetime as dt
+from patterns import analyze
 
 app = Flask(__name__)
 
@@ -478,6 +479,53 @@ def cards_and_stars_data():
 
     saved = dict(out)
     out["payload_text"] = json.dumps(saved, ensure_ascii=False, separators=(",", ":"))
+    return jsonify(out)
+
+
+@app.route("/patterns-data", methods=["POST"])
+def patterns_data():
+    """My Patterns: real counts across a person's earlier Cards and Stars
+    readings, for the AI to interpret. The AI is never asked to count.
+    INPUT: {"person": {...querent, same format as /synastry...},
+            "readings_text": "<history_line>###<history_line>###...",
+            "focus_question": "required",
+            "situation_names": "optional, one id=Name per line",
+            "min_readings": 5}
+    If there are fewer readings than min_readings, enough is "no" and the
+    app should show `message` instead of calling the AI."""
+    body = request.get_json(silent=True) or {}
+    try:
+        p = _parse_person(body.get("person"), "person")
+    except ValueError as e:
+        return _bad(str(e))
+
+    readings_text = body.get("readings_text")
+    if not isinstance(readings_text, str) or not readings_text.strip():
+        return _bad("readings_text is required (the saved history lines, separated by ###)")
+    focus = body.get("focus_question")
+    if not isinstance(focus, str) or not focus.strip():
+        return _bad("focus_question is required")
+    try:
+        min_readings = int(body.get("min_readings", 5))
+    except (TypeError, ValueError):
+        return _bad("min_readings must be a whole number")
+    if not 1 <= min_readings <= 50:
+        return _bad("min_readings must be between 1 and 50")
+
+    name = p.get("name", "the querent")
+    try:
+        chart = build_chart(name, p["year"], p["month"], p["day"],
+                            p["timezone"], p.get("place", ""))
+    except Exception as e:
+        return _bad(f"Could not calculate a chart -- check the timezone name and date. ({e})")
+
+    result = analyze(readings_text, chart, transits, str(body.get("situation_names") or ""),
+                     min_readings)
+    stats = result.pop("stats", {})
+    out = {"today": dt.date.today().isoformat(), "querent_name": name,
+           "focus_question": focus.strip(), **result}
+    out["payload_text"] = json.dumps({**out, "stats": stats}, ensure_ascii=False,
+                                     separators=(",", ":"))
     return jsonify(out)
 
 

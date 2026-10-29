@@ -308,10 +308,15 @@ def _transit_links(readings, chart, transits_fn):
     return found[:4], n, round(baseline, 2)
 
 
-def _links_text(found, n):
+def _links_text(found, n, span_days=None):
     head = (f"Transit links ({n} readings checked). Only the fast planets (Sun, Mercury, "
             "Venus, Mars) are compared, because the slow planets last weeks to months and "
             "would only mirror the direction over time shown above.")
+    if not found and span_days is not None and span_days < 28:
+        return (f"Transit links ({n} readings checked): these readings cover only "
+                f"{span_days + 1} days. Comparing transits with how readings leaned needs "
+                "readings spread over several weeks, at least 3 separate occasions more than a "
+                "week apart, so this part cannot say anything yet. It fills in as the history grows.")
     if not found:
         return head + ("\nNo fast transit passed the chance check. Nothing here is strong enough "
                        "to call a pattern yet.")
@@ -371,7 +376,8 @@ def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5):
             blocks.append(_group_text(label, grp, st))
 
     found, used_n, baseline = _transit_links(readings, chart, transits_fn)
-    blocks.append(_links_text(found, used_n))
+    span_days = (readings[-1]["date"] - readings[0]["date"]).days
+    blocks.append(_links_text(found, used_n, span_days))
 
     out["enough"] = "yes"
     out["message"] = ""

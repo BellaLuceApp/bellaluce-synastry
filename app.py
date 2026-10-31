@@ -39,6 +39,70 @@ def _bad(msg, code=400):
     return jsonify({"error": msg}), code
 
 
+MAX_SKY_DAYS = 1096  # about 3 years either side of today
+
+
+def _long_date(d):
+    return f"{d:%A}, {d:%B} {d.day}, {d.year}"
+
+
+def _to_int(v):
+    try:
+        return int(float(str(v).strip()))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sky_date(body):
+    """The date the sky should be read for. Optional: left out or empty means
+    today. Accepts target_year / target_month / target_day (what Bubble's
+    :extract year / month / date give), or one text target_date (YYYY-MM-DD,
+    M/D/YYYY, or an ISO timestamp). A year of 0 or empty means 'not given',
+    which also covers Bubble sending the empty example value from its call
+    setup. Returns (date, error_message_or_None)."""
+    real_today = dt.date.today()
+    y, m, d = (_to_int(body.get("target_year")), _to_int(body.get("target_month")),
+               _to_int(body.get("target_day")))
+    txt = str(body.get("target_date") or "").strip()
+    target = None
+    try:
+        if y:
+            target = dt.date(y, m, d)
+        elif txt and txt.lower() not in ("today", "none", "-"):
+            t = txt[:10]
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y"):
+                try:
+                    target = dt.datetime.strptime(t if fmt == "%Y-%m-%d" else txt.split(" ")[0], fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if target is None:
+                return real_today, "target_date must look like 2026-11-15"
+    except ValueError:
+        return real_today, "target date is not a real calendar date"
+    if target is None:
+        return real_today, None
+    if abs((target - real_today).days) > MAX_SKY_DAYS:
+        return real_today, "The requested date must be within 3 years of today"
+    return target, None
+
+
+def _sky_fields(sky, real_today):
+    """Plain-language description of which sky is being read, for the prompt."""
+    delta = (sky - real_today).days
+    if delta == 0:
+        when, label = "today", f"today, {_long_date(sky)}"
+    elif delta > 0:
+        when = "future"
+        label = (f"{_long_date(sky)} (a future date the querent asked about, "
+                 f"{delta} day{'s' if delta != 1 else ''} from today)")
+    else:
+        when = "past"
+        label = (f"{_long_date(sky)} (a past date the querent asked about, "
+                 f"{-delta} day{'s' if delta != -1 else ''} ago)")
+    return {"sky_date": sky.isoformat(), "sky_when": when, "sky_date_label": label}
+
+
 def _contact_line(c, a_name="Person A", b_name="Person B"):
     """One plain-English line for a single contact, ready to drop straight
     into an AI prompt -- so Bubble never has to assemble it from five
@@ -73,10 +137,11 @@ def _pace_tag(r):
             else "slow-moving, background for weeks or months")
 
 
-def _transit_text(rows, name):
-    """Today's transits for one person as plain lines. Empty -> a plain note."""
+def _transit_text(rows, name, when="today"):
+    """Transits for one person as plain lines. Empty -> a plain note."""
     if not rows:
-        return f"No tight transits to {name}'s chart today."
+        return (f"No tight transits to {name}'s chart today." if when == "today"
+                else f"No tight transits to {name}'s chart on that date.")
     out = []
     for r in rows:
         out.append(f"Transiting {r['transit']} {r['aspect']} {name}'s natal {r['natal']} -- "
@@ -156,7 +221,7 @@ def _transit_line(t):
 
 
 def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart=None, b_rows=None,
-                             shared_contacts=None):
+                             shared_contacts=None, real_today=None):
     """Flat, pre-formatted fields for the DailyAlignment {{placeholder}} prompt
     template. If no second person was given, the person_b_* fields are filled
     with harmless placeholder text ('(not included today)') and empty transit
@@ -173,6 +238,7 @@ def build_daily_prompt_data(today, a_name, a_chart, a_rows, b_name=None, b_chart
     a_possible = [t for t in a_rows if t["status"] == "possible"]
     data = {
         "today_date": today.isoformat(),
+        **_sky_fields(today, real_today or dt.date.today()),
         "person_a_name": a_name,
         "person_a_sun_sign": a_chart["points"]["Sun"]["sign"],
         "person_a_certain_count": len(a_certain),
@@ -300,7 +366,10 @@ def daily_alignment():
     except Exception as e:
         return _bad(f"Could not calculate a chart -- check the timezone name and date. ({e})")
 
-    today = dt.date.today()
+    real_today = dt.date.today()
+    today, sky_err = _sky_date(body)
+    if sky_err:
+        return _bad(sky_err)
     rows_a = transits(chart_a, today)
     rows_b = transits(chart_b, today) if chart_b is not None else None
 
@@ -315,6 +384,7 @@ def daily_alignment():
 
     payload = {
         "today": today.isoformat(),
+        **_sky_fields(today, real_today),
         "person_a": {"name": a.get("name", "Person A"),
                      "sun_sign": chart_a["points"]["Sun"]["sign"],
                      "transits": rows_a},
@@ -359,7 +429,7 @@ def daily_alignment():
     payload["prompt_data"] = build_daily_prompt_data(
         today, a.get("name", "Person A"), chart_a, rows_a,
         b.get("name", "Person B") if b else None, chart_b, rows_b,
-        shared_contacts=contacts)
+        shared_contacts=contacts, real_today=real_today)
     # One ready-made text copy of the whole result (minus the prompt text,
     # which Bubble already saves separately) so Bubble can store it.
     saved = {k: v for k, v in payload.items() if k != "prompt_data"}
@@ -427,7 +497,11 @@ def cards_and_stars_data():
 
     a_name = a.get("name", "the querent")
     b_name = b.get("name", "the other person") if b else ""
-    today = dt.date.today()
+    real_today = dt.date.today()
+    today, sky_err = _sky_date(body)
+    if sky_err:
+        return _bad(sky_err)
+    sky = _sky_fields(today, real_today)
 
     try:
         chart_a = build_chart(a_name, a["year"], a["month"], a["day"],
@@ -445,9 +519,10 @@ def cards_and_stars_data():
 
     out = {
         "today": today.isoformat(),
+        **sky,
         "querent_name": a_name,
         "querent_chart": _chart_text(sum_a, cards_a),
-        "querent_transits": _transit_text(rows_a, a_name),
+        "querent_transits": _transit_text(rows_a, a_name, sky["sky_when"]),
         "has_other_person": "no",
         "other_person_name": "",
         "other_person_chart": "",
@@ -470,7 +545,7 @@ def cards_and_stars_data():
             "has_other_person": "yes",
             "other_person_name": b_name,
             "other_person_chart": _chart_text(sum_b, cards_b),
-            "other_person_transits": _transit_text(rows_b, b_name),
+            "other_person_transits": _transit_text(rows_b, b_name, sky["sky_when"]),
             "contacts_block": "\n".join(_contact_line(c, a_name, b_name) for c in kept)
                               or "No notable contacts between these two charts.",
             "certain_count": sum(1 for c in kept if c["status"] == "certain"),

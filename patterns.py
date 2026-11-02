@@ -31,6 +31,7 @@ MAJOR_LOWER = {m.lower() for m in _MAJOR} | {"judgment", "the wheel of fortune"}
 MAX_READINGS_FOR_TRANSITS = 200   # most recent; keeps the call fast
 TIMELINE_MAX = 20                 # readings listed in the timeline (most recent)
 QUESTION_MAX_CHARS = 240
+GIST_MAX_CHARS = 450              # what an earlier reading concluded, per reading
 MIN_LINK_READINGS = 3             # a transit must be present in this many readings
 MIN_WITHOUT = 2                   # ...and absent in this many, so there is a contrast
 PERMUTATIONS = 2000               # shuffles used for the chance check
@@ -85,6 +86,16 @@ def parse_line(line):
         situation = (sm.group(1) or sm.group(2) or "").strip() or None
         cards_text = text[cards_m.end():sm.start()]
 
+    # optional conclusion of that reading: "| Read: <text>" placed before the situation
+    gist = ""
+    rm = re.search(r"\|\s*Read:\s*(.*?)\s*$", cards_text, re.I)
+    if rm:
+        gist = rm.group(1)
+        cards_text = cards_text[:rm.start()]
+    gist = re.sub(r"\*+", "", gist)
+    gist = re.sub(r"^\s*(the\s+read\s*:)\s*", "", gist, flags=re.I)
+    gist = re.sub(r"\s+", " ", gist).strip()
+
     cards = []
     for part in cards_text.split(","):
         part = part.strip().strip("|").strip()
@@ -96,7 +107,7 @@ def parse_line(line):
 
     q = re.search(r"Question:\s*(.*?)\s*\|\s*Energy Lean:", text, re.I)
     return {"date": date, "lean": lean, "cards": cards, "situation": situation,
-            "question": q.group(1) if q else ""}
+            "question": q.group(1) if q else "", "gist": gist}
 
 
 def parse_block(readings_text):
@@ -349,8 +360,14 @@ def _timeline_text(readings, label_for):
         if len(q) > QUESTION_MAX_CHARS:
             q = q[:QUESTION_MAX_CHARS].rstrip() + "..."
         cards = ", ".join(f"{n} ({'reversed' if rev else 'upright'})" for n, rev in r["cards"])
-        lines.append(f"  - {r['date'].isoformat()} | {label_for(r['situation'])} | "
-                     f"Energy Lean: {r['lean']} | Question: {q or '(not saved)'} | Cards: {cards}")
+        row = (f"  - {r['date'].isoformat()} | {label_for(r['situation'])} | "
+               f"Energy Lean: {r['lean']} | Question: {q or '(not saved)'} | Cards: {cards}")
+        g = r.get("gist", "")
+        if g:
+            if len(g) > GIST_MAX_CHARS:
+                g = g[:GIST_MAX_CHARS].rsplit(" ", 1)[0].rstrip(",;:") + "..."
+            row += f" | What that reading concluded: {g}"
+        lines.append(row)
     return "\n".join(lines)
 
 

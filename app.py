@@ -594,8 +594,13 @@ def patterns_data():
     except Exception as e:
         return _bad(f"Could not calculate a chart -- check the timezone name and date. ({e})")
 
+    try:
+        bc = birth_cards(p["year"], p["month"], p["day"], dt.date.today())
+        birth_names = [bc["personality"]["name"], bc["soul"]["name"]]
+    except Exception:
+        birth_names = []
     result = analyze(readings_text, chart, transits, str(body.get("situation_names") or ""),
-                     min_readings)
+                     min_readings, birth_names)
     stats = result.pop("stats", {})
     out = {"today": dt.date.today().isoformat(), "querent_name": name,
            "focus_question": focus.strip(), **result}

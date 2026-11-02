@@ -354,8 +354,184 @@ def _timeline_text(readings, label_for):
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- insights
+SELF_WORDS = {"i", "me", "my", "mine", "myself", "i'm", "im", "i've", "ive", "i'd", "i'll"}
+OTHER_WORDS = {"he", "him", "his", "himself", "she", "her", "hers", "herself", "they", "them",
+               "their", "theirs", "he's", "she's", "they're", "ex", "husband", "wife",
+               "boyfriend", "girlfriend", "partner", "mom", "mother", "dad", "father", "son",
+               "daughter", "boss", "friend", "someone", "somebody", "person", "man", "woman",
+               "guy", "girl", "lover", "crush", "date"}
+SUITS = ("Wands", "Cups", "Swords", "Pentacles")
+MIN_HALF_READINGS = 6   # older half vs newer half is shown only from here
+
+
+def _words(text):
+    return set(re.findall(r"[a-z']+", (text or "").lower().replace("’", "'")))
+
+
+def _question_focus(readings):
+    """Counts, from the wording of each saved question, how many are about
+    another person only, the querent only, both, or neither. Wording only: it
+    never decides what anyone feels or means."""
+    c = Counter()
+    for r in readings:
+        w = _words(r["question"])
+        o, s = bool(w & OTHER_WORDS), bool(w & SELF_WORDS)
+        c["both" if (o and s) else "other" if o else "self" if s else "neither"] += 1
+    return c
+
+
+def _suit_shares(readings):
+    total = sum(len(r["cards"]) for r in readings)
+    counts = Counter()
+    for r in readings:
+        for name, _ in r["cards"]:
+            m = re.search(r"\bof\s+(Wands|Cups|Swords|Pentacles|Coins|Disks)\s*$", name, re.I)
+            if m:
+                key = m.group(1).capitalize()
+                counts["Pentacles" if key in ("Coins", "Disks") else key] += 1
+            elif _is_major(name):
+                counts["Major Arcana"] += 1
+    return total, counts
+
+
+def _suit_text(readings):
+    total, counts = _suit_shares(readings)
+    if not total:
+        return "none"
+    order = [k for k, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    return ", ".join(f"{k} {_pct(counts[k], total)}%" for k in order)
+
+
+def _norm(name):
+    n = name.lower().strip()
+    return n[4:] if n.startswith("the ") else n
+
+
+def _pace_text(readings):
+    dates = [r["date"] for r in readings]
+    days = sorted(set(dates))
+    per_day = Counter(dates)
+    busiest = max(per_day.values())
+    span = (days[-1] - days[0]).days + 1
+    gaps = [(b - a).days for a, b in zip(days, days[1:])]
+    text = (f"{len(readings)} readings over {span} days, on {len(days)} different days; "
+            f"the busiest day had {busiest}")
+    if gaps:
+        text += f"; the longest gap between reading days was {max(gaps)} day{'s' if max(gaps) != 1 else ''}"
+    return text
+
+
+def _insights(readings, birth_names, label_for):
+    """Extra facts, all counted here, that say something a plain tally cannot:
+    who the questions are about, which suits and kinds of card dominate and how
+    that changed, cards that arrived or faded, and the pace. Returns (text, data)."""
+    n = len(readings)
+    half = n // 2
+    old, new = readings[:half], readings[-half:]
+    has_halves = n >= MIN_HALF_READINGS
+    lines = ["What the readings show (all of this was counted by code):"]
+    data = {}
+
+    # who the questions are about
+    f = _question_focus(readings)
+    lines.append(
+        f"  Question wording ({n} questions): {f['other']} are about another person only, "
+        f"{f['self']} are about the querent only (I, me, my), {f['both']} mention both, "
+        f"{f['neither']} mention neither.")
+    data["question_focus"] = dict(f)
+    if has_halves:
+        fo, fn = _question_focus(old), _question_focus(new)
+        lines.append(
+            f"    Older half ({old[0]['date'].isoformat()} to {old[-1]['date'].isoformat()}): "
+            f"another person only {_pct(fo['other'], half)}%, the querent only {_pct(fo['self'], half)}%, "
+            f"both {_pct(fo['both'], half)}%. "
+            f"Newer half ({new[0]['date'].isoformat()} to {new[-1]['date'].isoformat()}): "
+            f"another person only {_pct(fn['other'], half)}%, the querent only {_pct(fn['self'], half)}%, "
+            f"both {_pct(fn['both'], half)}%.")
+        data["question_focus_halves"] = {"older": dict(fo), "newer": dict(fn), "half": half}
+
+    # suits and kinds of card
+    lines.append(f"  Share of all cards drawn by suit: {_suit_text(readings)}.")
+    if has_halves:
+        lines.append(f"    Older half: {_suit_text(old)}. Newer half: {_suit_text(new)}.")
+    allc = [name for r in readings for name, _ in r["cards"]]
+    aces = sum(1 for c in allc if re.match(r"^ace of", c, re.I))
+    tens = sum(1 for c in allc if re.match(r"^ten of", c, re.I))
+    lines.append(f"  Beginnings and completions: {aces} Aces drawn, {tens} Tens drawn.")
+    data["aces"], data["tens"] = aces, tens
+
+    # court cards (people)
+    courts = Counter()
+    court_dir = defaultdict(lambda: [0, 0])
+    for r in readings:
+        for name, rev in r["cards"]:
+            if re.match(r"^(page|knight|queen|king) of", name, re.I):
+                courts[name] += 1
+                court_dir[name][1 if rev else 0] += 1
+    if courts:
+        top = sorted(courts.items(), key=lambda kv: (-kv[1], kv[0]))[:4]
+        total_courts = sum(courts.values())
+        parts = [f"{nm} x{c} ({court_dir[nm][0]} upright, {court_dir[nm][1]} reversed)"
+                 for nm, c in top]
+        lines.append(f"  Court cards (they tend to stand for people or roles): {total_courts} drawn "
+                     f"in total. Most frequent: " + "; ".join(parts) + ".")
+    else:
+        lines.append("  Court cards (they tend to stand for people or roles): none drawn.")
+
+    # new and faded cards
+    if n >= 4:
+        before = {_norm(nm) for r in readings[:-2] for nm, _ in r["cards"]}
+        fresh, seen = [], set()
+        for r in readings[-2:]:
+            for nm, rev in r["cards"]:
+                k = _norm(nm)
+                if k not in before and k not in seen:
+                    seen.add(k)
+                    fresh.append(f"{nm} ({'reversed' if rev else 'upright'})")
+        lines.append("  New in the latest 2 readings (never drawn before): "
+                     + (", ".join(fresh[:6]) if fresh else "none") + ".")
+    if has_halves:
+        earlier = Counter()
+        for r in readings[:-3]:
+            for k in {_norm(nm) for nm, _ in r["cards"]}:
+                earlier[k] += 1
+        latest = {_norm(nm) for r in readings[-3:] for nm, _ in r["cards"]}
+        display = {}
+        for r in readings:
+            for nm, _ in r["cards"]:
+                display.setdefault(_norm(nm), nm)
+        faded = [display[k] for k, c in sorted(earlier.items(), key=lambda kv: (-kv[1], kv[0]))
+                 if c >= 2 and k not in latest]
+        lines.append("  Cards that came up in 2 or more earlier readings but not in the latest 3: "
+                     + (", ".join(faded[:5]) if faded else "none") + ".")
+
+    # birth cards
+    if birth_names:
+        keys = {_norm(b) for b in birth_names if b}
+        hits = [r for r in readings if any(_norm(nm) in keys for nm, _ in r["cards"])]
+        label = " / ".join(dict.fromkeys(b for b in birth_names if b))
+        lines.append(f"  The querent's own birth card ({label}) appeared in {len(hits)} of {n} readings.")
+        data["birth_card_readings"] = len(hits)
+
+    # reversal share over time
+    if has_halves:
+        def rev_pct(rs):
+            tot = sum(len(r["cards"]) for r in rs)
+            return _pct(sum(1 for r in rs for _, x in r["cards"] if x), tot)
+        lines.append(f"  Reversed cards: {rev_pct(old)}% in the older half, {rev_pct(new)}% in the newer half.")
+
+    # pace
+    lines.append("  Pace: " + _pace_text(readings) + ".")
+    if not has_halves:
+        lines.append("  Older-versus-newer comparisons appear once there are at least "
+                     f"{MIN_HALF_READINGS} readings in this scope.")
+    return "\n".join(lines), data
+
+
 # ------------------------------------------------------------------- driver
-def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5):
+def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5,
+            birth_names=None):
     readings, skipped = parse_block(readings_text)
     names = parse_names(names_text)
     n = len(readings)
@@ -391,6 +567,8 @@ def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5):
     blocks, stats_groups = [], {}
     overall = _group_stats(readings)
     blocks.append(_group_text("All readings in this scope", readings, overall))
+    insight_text, insight_data = _insights(readings, birth_names or [], label_for)
+    blocks.append(insight_text)
     blocks.append(_timeline_text(readings, label_for))
     labelled = [k for k in order if k is not None]
     if labelled:      # break down by situation only when any reading has one
@@ -414,6 +592,6 @@ def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5):
     out["enough"] = "yes"
     out["message"] = ""
     out["patterns_block"] = "\n\n".join(blocks)
-    out["stats"] = {"overall": overall, "by_situation": stats_groups,
+    out["stats"] = {"overall": overall, "insights": insight_data, "by_situation": stats_groups,
                     "transit_links": found, "average_lean": baseline}
     return out

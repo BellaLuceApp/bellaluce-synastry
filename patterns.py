@@ -544,11 +544,27 @@ def _plural(rank):
 
 
 def parse_current_cards(text):
-    """'Name|Orientation;;Name|Orientation...' (or one per line) -> list of
-    (position, name, reversed). Blank slots are skipped but still count as a
-    position, so numbers match the spread."""
+    """Today's cards, as (position, name, reversed). Two input forms:
+
+    1. The reading's own prompt lines, as Bubble holds them (possibly cleaned of
+       odd characters and run together on one line), such as
+         Position 3 - question put to this card: ... | Card: Death - Reversed
+       Blank slots ("Card:  - ") are skipped.
+    2. 'Name|Orientation;;Name|Orientation...' (or one per line); blank slots are
+       skipped but still count as a position."""
+    text = text or ""
+    if re.search(r"Position\s+\d+\s*-", text) and "Card:" in text:
+        flat = re.sub(r"\s+", " ", text)
+        pat = (r"Position\s+(\d+)\s*-.*?\|\s*Card:\s*(.*?)\s*-\s*(Upright|Reversed)?\s*"
+               r"(?=Position\s+\d+\s*-|$)")
+        out = []
+        for m in re.finditer(pat, flat, re.I):
+            name = m.group(2).strip()
+            if name:
+                out.append((int(m.group(1)), name, (m.group(3) or "").lower() == "reversed"))
+        return out
     out = []
-    for i, part in enumerate(re.split(r"\n|;\s*;", text or ""), start=1):
+    for i, part in enumerate(re.split(r"\n|;\s*;", text), start=1):
         name, _, ori = part.partition("|")
         name = re.sub(r"\s+", " ", name).strip()
         if name:

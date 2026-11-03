@@ -31,7 +31,7 @@ MAJOR_LOWER = {m.lower() for m in _MAJOR} | {"judgment", "the wheel of fortune"}
 MAX_READINGS_FOR_TRANSITS = 200   # most recent; keeps the call fast
 TIMELINE_MAX = 20                 # readings listed in the timeline (most recent)
 QUESTION_MAX_CHARS = 240
-GIST_MAX_CHARS = 450              # what an earlier reading concluded, per reading
+GIST_MAX_CHARS = 600              # what an earlier reading concluded, per reading
 MIN_LINK_READINGS = 3             # a transit must be present in this many readings
 MIN_WITHOUT = 2                   # ...and absent in this many, so there is a contrast
 PERMUTATIONS = 2000               # shuffles used for the chance check
@@ -365,7 +365,12 @@ def _timeline_text(readings, label_for):
         g = r.get("gist", "")
         if g:
             if len(g) > GIST_MAX_CHARS:
-                g = g[:GIST_MAX_CHARS].rsplit(" ", 1)[0].rstrip(",;:") + "..."
+                cut = g[:GIST_MAX_CHARS]
+                ends = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", cut)]
+                if ends and ends[-1] >= 200:
+                    g = cut[:ends[-1]].strip()
+                else:
+                    g = cut.rsplit(" ", 1)[0].rstrip(",;:") + "..."
             row += f" | What that reading concluded: {g}"
         lines.append(row)
     return "\n".join(lines)

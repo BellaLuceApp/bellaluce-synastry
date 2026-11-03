@@ -600,7 +600,8 @@ def patterns_data():
     except Exception:
         birth_names = []
     result = analyze(readings_text, chart, transits, str(body.get("situation_names") or ""),
-                     min_readings, birth_names)
+                     min_readings, birth_names,
+                     str(body.get("current_cards") or ""))
     stats = result.pop("stats", {})
     out = {"today": dt.date.today().isoformat(), "querent_name": name,
            "focus_question": focus.strip(), **result}

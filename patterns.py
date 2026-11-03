@@ -455,23 +455,9 @@ def _insights(readings, birth_names, label_for):
     lines = ["What the readings show (all of this was counted by code):"]
     data = {}
 
-    # who the questions are about
+    # who the questions are about (kept as data only; not shown to the AI)
     f = _question_focus(readings)
-    lines.append(
-        f"  Question wording ({n} questions): {f['other']} are about another person only, "
-        f"{f['self']} are about the querent only (I, me, my), {f['both']} mention both, "
-        f"{f['neither']} mention neither.")
     data["question_focus"] = dict(f)
-    if has_halves:
-        fo, fn = _question_focus(old), _question_focus(new)
-        lines.append(
-            f"    Older half ({old[0]['date'].isoformat()} to {old[-1]['date'].isoformat()}): "
-            f"another person only {_pct(fo['other'], half)}%, the querent only {_pct(fo['self'], half)}%, "
-            f"both {_pct(fo['both'], half)}%. "
-            f"Newer half ({new[0]['date'].isoformat()} to {new[-1]['date'].isoformat()}): "
-            f"another person only {_pct(fn['other'], half)}%, the querent only {_pct(fn['self'], half)}%, "
-            f"both {_pct(fn['both'], half)}%.")
-        data["question_focus_halves"] = {"older": dict(fo), "newer": dict(fn), "half": half}
 
     # suits and kinds of card
     lines.append(f"  Share of all cards drawn by suit: {_suit_text(readings)}.")
@@ -543,17 +529,89 @@ def _insights(readings, birth_names, label_for):
             return _pct(sum(1 for r in rs for _, x in r["cards"] if x), tot)
         lines.append(f"  Reversed cards: {rev_pct(old)}% in the older half, {rev_pct(new)}% in the newer half.")
 
-    # pace
-    lines.append("  Pace: " + _pace_text(readings) + ".")
-    if not has_halves:
-        lines.append("  Older-versus-newer comparisons appear once there are at least "
-                     f"{MIN_HALF_READINGS} readings in this scope.")
+    data["pace"] = _pace_text(readings)
     return "\n".join(lines), data
+
+
+# ------------------------------------------------------------ card history
+RANK_RE = re.compile(r"^(Ace|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Page|Knight|Queen|King)"
+                     r"\s+of\s+(Wands|Cups|Swords|Pentacles|Coins|Disks)\s*$", re.I)
+HISTORY_QUESTION_CHARS = 90
+
+
+def _plural(rank):
+    return rank + ("es" if rank.lower() == "six" else "s")
+
+
+def parse_current_cards(text):
+    """'Name|Orientation;;Name|Orientation...' (or one per line) -> list of
+    (position, name, reversed). Blank slots are skipped but still count as a
+    position, so numbers match the spread."""
+    out = []
+    for i, part in enumerate(re.split(r"\n|;\s*;", text or ""), start=1):
+        name, _, ori = part.partition("|")
+        name = re.sub(r"\s+", " ", name).strip()
+        if name:
+            out.append((i, name, "rev" in ori.lower()))
+    return out
+
+
+def _short_q(q):
+    q = re.sub(r"\s+", " ", q or "").strip()
+    return q if len(q) <= HISTORY_QUESTION_CHARS else q[:HISTORY_QUESTION_CHARS].rstrip() + "..."
+
+
+def _card_history(readings, current_cards):
+    """For each of today's cards: did it come up before in this scope (when,
+    which way up, how that reading leaned, what was asked), and which other
+    cards of the same number or court rank came up (a repeating layer in a
+    different suit). Today's own reading is never in the list."""
+    if not current_cards:
+        return ""
+    newest_first = list(reversed(readings))
+    lines = ["Earlier appearances of today's cards, from the earlier readings in this scope "
+             "(newest first; today's reading is not included):"]
+    for pos, name, is_rev in current_cards:
+        today_way = "reversed" if is_rev else "upright"
+        lines.append(f"Position {pos} - {name} ({today_way} today):")
+        key = _norm(name)
+        hits = []
+        for r in newest_first:
+            for nm, rev in r["cards"]:
+                if _norm(nm) == key:
+                    hits.append((r, rev))
+                    break
+        if hits:
+            up = sum(1 for _, rv in hits if not rv)
+            down = len(hits) - up
+            way = ", ".join(x for x in (f"{up} upright" if up else "", f"{down} reversed" if down else "") if x)
+            lines.append(f"  - Drawn before in {len(hits)} earlier reading{'s' if len(hits) != 1 else ''} "
+                         f"({way}).")
+            for r, rev in hits[:3]:
+                lines.append(f"    * {r['date'].isoformat()}, {'reversed' if rev else 'upright'}; "
+                             f"Energy Lean that day: {r['lean']}; the question then: "
+                             f"\"{_short_q(r['question'])}\"")
+        else:
+            lines.append("  - Not drawn before in this scope.")
+        m = RANK_RE.match(name)
+        if m:
+            rank = m.group(1).lower()
+            seen, echoes = set(), []
+            for r in newest_first:
+                for nm, rev in r["cards"]:
+                    mm = RANK_RE.match(nm)
+                    if mm and mm.group(1).lower() == rank and _norm(nm) != key and _norm(nm) not in seen:
+                        seen.add(_norm(nm))
+                        echoes.append(f"{nm} ({r['date'].isoformat()}, {'reversed' if rev else 'upright'})")
+            if echoes:
+                lines.append(f"  - Other {_plural(m.group(1))} drawn earlier (a repeating number or rank "
+                             f"in another suit): " + "; ".join(echoes[:3]) + ".")
+    return "\n".join(lines)
 
 
 # ------------------------------------------------------------------- driver
 def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5,
-            birth_names=None):
+            birth_names=None, current_cards_text=""):
     readings, skipped = parse_block(readings_text)
     names = parse_names(names_text)
     n = len(readings)
@@ -564,6 +622,7 @@ def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5,
         out["message"] = (f"Not enough readings yet. There are {n} in this scope and at "
                           f"least {min_readings} are needed before patterns mean anything.")
         out["patterns_block"] = ""
+        out["card_history_block"] = ""
         out["stats"] = {}
         return out
 
@@ -614,6 +673,7 @@ def analyze(readings_text, chart, transits_fn, names_text="", min_readings=5,
     out["enough"] = "yes"
     out["message"] = ""
     out["patterns_block"] = "\n\n".join(blocks)
+    out["card_history_block"] = _card_history(readings, parse_current_cards(current_cards_text))
     out["stats"] = {"overall": overall, "insights": insight_data, "by_situation": stats_groups,
                     "transit_links": found, "average_lean": baseline}
     return out
